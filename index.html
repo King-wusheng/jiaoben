@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>模拟消息发送</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222d;
+      --line: #2a3544;
+      --text: #e7edf5;
+      --muted: #8b9bb0;
+      --accent: #3d9cf0;
+      --ok: #3ecf8e;
+      --err: #f07178;
+      --warn: #e6b450;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1a2a3d 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #182433 0%, transparent 50%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.5rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+    }
+
+    .sub {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    @media (max-width: 720px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .stat {
+      background: #121821;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .stat .label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-bottom: 6px;
+    }
+
+    .stat .value {
+      font-size: 1.15rem;
+      font-variant-numeric: tabular-nums;
+      word-break: break-all;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      color: #fff;
+      background: var(--accent);
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+
+    button:hover:not(:disabled) { opacity: 0.92; }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #2b3645;
+      color: var(--text);
+    }
+
+    button.danger { background: #b84b55; }
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .progress {
+      margin-top: 14px;
+      height: 8px;
+      background: #121821;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+
+    .progress > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #2f7fd0, #3ecf8e);
+      transition: width 0.25s ease;
+    }
+
+    .log-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .log-head h2 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    #log {
+      max-height: 480px;
+      overflow: auto;
+      font-family: ui-monospace, Consolas, "Courier New", monospace;
+      font-size: 0.8rem;
+      line-height: 1.45;
+      background: #121821;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .log-item {
+      padding: 8px 0;
+      border-bottom: 1px solid #243041;
+    }
+
+    .log-item:last-child { border-bottom: 0; }
+
+    .tag {
+      display: inline-block;
+      min-width: 48px;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      margin-right: 6px;
+    }
+
+    .tag.ok { background: rgba(62, 207, 142, 0.18); color: var(--ok); }
+    .tag.err { background: rgba(240, 113, 120, 0.18); color: var(--err); }
+    .tag.info { background: rgba(61, 156, 240, 0.18); color: var(--accent); }
+    .tag.wait { background: rgba(230, 180, 80, 0.18); color: var(--warn); }
+
+    .muted { color: var(--muted); }
+
+    .config-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      align-items: end;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .field input,
+    .field select {
+      width: 140px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #121821;
+      color: var(--text);
+      font-size: 0.95rem;
+      font-variant-numeric: tabular-nums;
+      outline: none;
+    }
+
+    .field select { width: 160px; cursor: pointer; }
+
+    .field input:focus,
+    .field select:focus {
+      border-color: var(--accent);
+    }
+
+    .field input:disabled,
+    .field select:disabled {
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>模拟消息发送</h1>
+    
+    <div class="panel">
+      <div class="stats">
+        <div class="stat">
+          <div class="label">总数</div>
+          <div class="value" id="total">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">已发送</div>
+          <div class="value" id="sent">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">状态</div>
+          <div class="value" id="status">未开始</div>
+        </div>
+        <div class="stat">
+          <div class="label">下次等待</div>
+          <div class="value" id="nextWait">-</div>
+        </div>
+      </div>
+
+      <div class="config-row">
+        <div class="field">
+          <label for="modelFile">数据文件</label>
+          <select id="modelFile"></select>
+        </div>
+        <div class="field">
+          <label for="maxDelaySec">最大间隔（秒）</label>
+          <input id="maxDelaySec" type="number" min="1" step="1" value="10" />
+        </div>
+        <button id="btnReloadModel" class="secondary" type="button">重新加载</button>
+        <span class="hint">切换文件后会重新加载；运行中不可切换</span>
+      </div>
+
+      <div class="actions" style="margin-top: 16px;">
+        <button id="btnStart">开始发送</button>
+        <button id="btnPause" class="secondary" disabled>暂停</button>
+        <button id="btnStop" class="danger" disabled>停止并重置</button>
+        <span class="hint" id="loadHint">正在加载 model.json…</span>
+      </div>
+      <div class="progress"><i id="bar"></i></div>
+    </div>
+
+    <div class="panel">
+      <div class="log-head">
+        <h2>运行日志</h2>
+        <button id="btnClearLog" class="secondary" type="button">清空日志</button>
+      </div>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "http://192.168.1.96:20202/juzi/callback";
+    // 延迟请求时长 s
+    const DEFAULT_MAX_DELAY_SEC = 10;
+    /** 模拟数据文件 */
+    const MODEL_FILES = ["model.json","model2.json"];
+
+    const DEFAULT_CHAT_ID = "6a4c8ac67dad3f2469625443";
+
+    function getQueryParam(name) {
+      return new URLSearchParams(location.search).get(name);
+    }
+
+    function getChatId() {
+      const fromRoute = (getQueryParam("chatId") || "").trim();
+      return fromRoute || DEFAULT_CHAT_ID;
+    }
+
+    const BASE_PAYLOAD = {
+      orgId: "68e70e1a2224999385816c6f",
+      groupId: "69e0400855314e4e090316f4",
+      token: "a539895b64ae4940a1872e5fe507c90f",
+      botId: "6a4210b63765149a0c9e58e0",
+      imBotId: "1688858402770889",
+      botUserId: "634702026",
+      avatar: "https://wx.qlogo.cn/mmhead/j8cooK2zCqqGgy56Cy4iaHKZIPciaYAibicjYY8z0dCicba87XSj3e2CpRg/0",
+      imContactId: "7881299760941752",
+      externalUserId: "wmKUshRAAAvFaSNuUs8DktC5wADC_-LQ",
+      customerExternalUserId: "wmKUshRAAAvFaSNuUs8DktC5wADC_-LQ",
+      contactName: "Sky.Lynn",
+      contactType: 1,
+      source: 0,
+      messageType: 7,
+    };
+
+    const el = {
+      total: document.getElementById("total"),
+      sent: document.getElementById("sent"),
+      status: document.getElementById("status"),
+      nextWait: document.getElementById("nextWait"),
+      bar: document.getElementById("bar"),
+      log: document.getElementById("log"),
+      loadHint: document.getElementById("loadHint"),
+      btnStart: document.getElementById("btnStart"),
+      btnPause: document.getElementById("btnPause"),
+      btnStop: document.getElementById("btnStop"),
+      btnClearLog: document.getElementById("btnClearLog"),
+      btnReloadModel: document.getElementById("btnReloadModel"),
+      maxDelaySec: document.getElementById("maxDelaySec"),
+      modelFile: document.getElementById("modelFile"),
+    };
+
+    // 用 MODEL_FILES 填充下拉，之后只需改 MODEL_FILES 一处
+    el.modelFile.innerHTML = MODEL_FILES.map((f, i) =>
+      `<option value="${f}"${i === 0 ? " selected" : ""}>${f}</option>`
+    ).join("");
+
+    let messages = [];
+    /** talkList.json 全量记录（含 type），用于 model.json 发送时附带上文 */
+    let talkListAll = [];
+    let index = 0;
+    let sentCount = 0;
+    let running = false;
+    let paused = false;
+    let timerId = null;
+    let countdownId = null;
+    let waitUntil = 0;
+
+    function genMessageId() {
+      if (crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+      return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 14)}`;
+    }
+
+    function parseTime(str) {
+      // "2026-06-17 20:16:41" -> local Date
+      return new Date(String(str).replace(" ", "T"));
+    }
+
+    function getMaxDelayMs() {
+      const sec = Number(el.maxDelaySec.value);
+      if (!Number.isFinite(sec) || sec < 1) return DEFAULT_MAX_DELAY_SEC * 1000;
+      return Math.floor(sec) * 1000;
+    }
+
+    /** 相邻两条：差 ≤最大间隔用实际差，超过则封顶；第一条立即发 */
+    function getDelayMs(prevItem, currItem) {
+      if (!prevItem) return 0;
+      const prev = parseTime(prevItem.time).getTime();
+      const curr = parseTime(currItem.time).getTime();
+      if (Number.isNaN(prev) || Number.isNaN(curr)) return 0;
+      const diff = Math.max(0, curr - prev);
+      return Math.min(diff, getMaxDelayMs());
+    }
+
+    function formatMs(ms) {
+      if (ms <= 0) return "立即";
+      const s = Math.ceil(ms / 1000);
+      if (s < 60) return `${s} 秒`;
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return r ? `${m} 分 ${r} 秒` : `${m} 分`;
+    }
+
+    function setStatus(text) {
+      el.status.textContent = text;
+    }
+
+    function updateProgress() {
+      el.sent.textContent = String(sentCount);
+      const pct = messages.length ? (sentCount / messages.length) * 100 : 0;
+      el.bar.style.width = `${pct}%`;
+    }
+
+    function log(tag, cls, html) {
+      const item = document.createElement("div");
+      item.className = "log-item";
+      item.innerHTML = `<span class="tag ${cls}">${tag}</span>${html}`;
+      el.log.prepend(item);
+    }
+
+    function clearTimers() {
+      if (timerId) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      if (countdownId) {
+        clearInterval(countdownId);
+        countdownId = null;
+      }
+      waitUntil = 0;
+      el.nextWait.textContent = "-";
+    }
+
+    function startCountdown(delayMs) {
+      waitUntil = Date.now() + delayMs;
+      const tick = () => {
+        const left = Math.max(0, waitUntil - Date.now());
+        el.nextWait.textContent = formatMs(left);
+        if (left <= 0 && countdownId) {
+          clearInterval(countdownId);
+          countdownId = null;
+        }
+      };
+      tick();
+      countdownId = setInterval(tick, 200);
+    }
+
+    /** talkList 请求最多携带的上文条数 */
+    const TALK_LIST_LIMIT = 30;
+
+    /**
+     * 按 text+time 在 talkList 中定位当前消息，返回这句话之前最近的记录（最多 30 条）。
+     * 不依赖 model 数组下标（model 可能被删过前几条）。
+     */
+    function getTalkListBefore(item) {
+      if (!talkListAll.length || !item) return [];
+      const text = item.text;
+      const time = item.time == null ? "" : String(item.time);
+      const idx = talkListAll.findIndex(
+        (t) => t.type === 1 && t.text === text && String(t.time || "") === time
+      );
+      if (idx < 0) return [];
+      const before = talkListAll.slice(0, idx);
+      return before.length > TALK_LIST_LIMIT
+        ? before.slice(-TALK_LIST_LIMIT)
+        : before;
+    }
+
+    async function sendOne(item) {
+      const body = {
+        ...BASE_PAYLOAD,
+        chatId: getChatId(),
+        messageId: genMessageId(),
+        timestamp: Date.now(),
+        payload: { text: item.text },
+      };
+
+      // 仅 model.json 对话附带 talkList（这句话之前的全部记录）
+      if (getModelFile() === "model.json") {
+        body.talkList = getTalkListBefore(item);
+      }
+
+      const talkHint =
+        body.talkList != null
+          ? ` · talkList=${body.talkList.length} 条`
+          : "";
+
+      log(
+        "SEND",
+        "info",
+        `<span class="muted">#${index + 1}</span> ${escapeHtml(item.text)} <span class="muted">· chatId=${body.chatId} · messageId=${body.messageId} · ts=${body.timestamp}${talkHint}</span>`
+      );
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        let preview = text;
+        try {
+          preview = JSON.stringify(JSON.parse(text));
+        } catch (_) { /* keep raw */ }
+
+        if (!res.ok) {
+          log("ERR", "err", `HTTP ${res.status} · ${escapeHtml(preview.slice(0, 300))}`);
+          return false;
+        }
+        log("OK", "ok", escapeHtml(preview.slice(0, 300) || "(空响应)"));
+        return true;
+      } catch (err) {
+        log(
+          "ERR",
+          "err",
+          `${escapeHtml(err.message || String(err))} <span class="muted">（若浏览器报 CORS，需后端放行或用本地代理）</span>`
+        );
+        return false;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    async function scheduleNext() {
+      if (!running || paused) return;
+
+      if (index >= messages.length) {
+        running = false;
+        clearTimers();
+        setStatus("已完成");
+        el.btnStart.disabled = false;
+        el.btnPause.disabled = true;
+        el.btnStop.disabled = true;
+        el.btnPause.textContent = "暂停";
+        log("DONE", "ok", `全部 ${messages.length} 条已处理完毕`);
+        return;
+      }
+
+      const prev = index > 0 ? messages[index - 1] : null;
+      const curr = messages[index];
+      const delay = getDelayMs(prev, curr);
+
+      if (delay > 0) {
+        const rawDiff = prev
+          ? Math.max(0, parseTime(curr.time) - parseTime(prev.time))
+          : 0;
+        const maxDelayMs = getMaxDelayMs();
+        const capped = rawDiff > maxDelayMs;
+        log(
+          "WAIT",
+          "wait",
+          `等待 ${formatMs(delay)} 后发送第 ${index + 1} 条` +
+            (capped
+              ? ` <span class="muted">（原始间隔 ${formatMs(rawDiff)}，已封顶 ${formatMs(maxDelayMs)}）</span>`
+              : ` <span class="muted">（按原始间隔）</span>`)
+        );
+        setStatus("等待中");
+        startCountdown(delay);
+      } else {
+        el.nextWait.textContent = "立即";
+        setStatus("发送中");
+      }
+
+      timerId = setTimeout(async () => {
+        if (!running || paused) return;
+        clearInterval(countdownId);
+        countdownId = null;
+        el.nextWait.textContent = "-";
+        setStatus("发送中");
+
+        await sendOne(curr);
+        sentCount += 1;
+        index += 1;
+        updateProgress();
+        scheduleNext();
+      }, delay);
+    }
+
+    function getModelFile() {
+      const name = String(el.modelFile.value || "").trim();
+      if (MODEL_FILES.includes(name)) return name;
+      return MODEL_FILES[0];
+    }
+
+    function resetProgress() {
+      index = 0;
+      sentCount = 0;
+      updateProgress();
+    }
+
+    function setRunningUi(isRunning) {
+      el.btnStart.disabled = isRunning;
+      el.btnPause.disabled = !isRunning;
+      el.btnStop.disabled = !isRunning;
+      const lockConfig = isRunning && !paused;
+      el.maxDelaySec.disabled = lockConfig;
+      el.modelFile.disabled = lockConfig;
+      el.btnReloadModel.disabled = lockConfig;
+    }
+
+    async function loadTalkList() {
+      try {
+        const res = await fetch("./talkList.json", { cache: "no-store" });
+        if (!res.ok) throw new Error(`加载 talkList.json 失败: HTTP ${res.status}`);
+        const data = await res.json();
+        if (!Array.isArray(data)) throw new Error("talkList.json 格式应为数组");
+        talkListAll = data;
+        log("INFO", "info", `talkList.json 加载成功，共 ${talkListAll.length} 条`);
+        return true;
+      } catch (err) {
+        talkListAll = [];
+        log("ERR", "err", escapeHtml(err.message || String(err)));
+        return false;
+      }
+    }
+
+    async function loadModel({ reset = true } = {}) {
+      const file = getModelFile();
+      el.loadHint.textContent = `正在加载 ${file}…`;
+      el.btnStart.disabled = true;
+      try {
+        const res = await fetch(`./${file}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`加载 ${file} 失败: HTTP ${res.status}`);
+        const data = await res.json();
+        if (!Array.isArray(data)) throw new Error(`${file} 格式应为数组`);
+        messages = data;
+        if (reset) resetProgress();
+        el.total.textContent = String(messages.length);
+        el.loadHint.textContent = `已加载 ${file}（${messages.length} 条）`;
+        el.btnStart.disabled = running;
+        log("INFO", "info", `${file} 加载成功，共 ${messages.length} 条`);
+        return true;
+      } catch (err) {
+        messages = [];
+        el.total.textContent = "0";
+        el.loadHint.textContent = `${file} 加载失败`;
+        el.btnStart.disabled = true;
+        log("ERR", "err", escapeHtml(err.message || String(err)));
+        return false;
+      }
+    }
+
+    el.btnStart.addEventListener("click", () => {
+      if (!messages.length) {
+        log("ERR", "err", `${getModelFile()} 无数据`);
+        return;
+      }
+      if (paused && running) {
+        paused = false;
+        el.btnPause.textContent = "暂停";
+        setStatus("继续中");
+        setRunningUi(true);
+        scheduleNext();
+        return;
+      }
+      if (index >= messages.length) {
+        index = 0;
+        sentCount = 0;
+        updateProgress();
+      }
+      running = true;
+      paused = false;
+      setRunningUi(true);
+      el.btnPause.textContent = "暂停";
+      setStatus("运行中");
+      log("INFO", "info", `开始从第 ${index + 1} 条发送，共 ${messages.length} 条 · chatId=${getChatId()}`);
+      scheduleNext();
+    });
+
+    el.btnPause.addEventListener("click", () => {
+      if (!running) return;
+      paused = true;
+      clearTimers();
+      setStatus("已暂停");
+      el.btnStart.disabled = false;
+      el.btnPause.disabled = true;
+      el.btnPause.textContent = "暂停";
+      el.maxDelaySec.disabled = false;
+      el.modelFile.disabled = false;
+      el.btnReloadModel.disabled = false;
+      log("INFO", "info", `已暂停，当前位置第 ${index + 1} 条`);
+    });
+
+    el.btnStop.addEventListener("click", () => {
+      running = false;
+      paused = false;
+      clearTimers();
+      index = 0;
+      sentCount = 0;
+      updateProgress();
+      setStatus("已停止");
+      setRunningUi(false);
+      el.btnPause.textContent = "暂停";
+      log("INFO", "info", "已停止并重置进度");
+    });
+
+    el.btnClearLog.addEventListener("click", () => {
+      el.log.innerHTML = "";
+    });
+
+    el.btnReloadModel.addEventListener("click", () => {
+      if (running && !paused) return;
+      loadModel({ reset: true });
+    });
+
+    el.modelFile.addEventListener("change", () => {
+      if (running && !paused) return;
+      loadModel({ reset: true });
+    });
+
+    Promise.all([loadTalkList(), loadModel({ reset: true })]);
+  </script>
+</body>
+</html>
