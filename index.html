@@ -296,6 +296,7 @@
     </div>
   </div>
 
+  <script src="./node_modules/xlsx/xlsx.js"></script>
   <script>
     const API_URL = "http://test-lhw-dify.ydtg.com.cn/v1/workflows/run";
     const API_KEY = "app-Qwp0qBULTAFuVuGSry86I2NR";
@@ -351,7 +352,7 @@
     let messages = [];
     /** 当前选中的 talkList 全量记录（含 type），发送时附带上文 */
     let talkListAll = [];
-    /** 本轮 SEND + OK 结果，用于导出 JSON */
+    /** 本轮 SEND + OK 结果，用于导出 Excel */
     let sessionRecords = [];
     let index = 0;
     let sentCount = 0;
@@ -489,13 +490,47 @@
       return str.replace(/<[^>]+>/g, "").trim();
     }
 
-    function buildExportJson() {
-      const out = [];
-      for (const r of sessionRecords) {
-        out.push(`[用户]：${r.user}`);
-        out.push(`[客服]：${r.reply}`);
+    /**
+     * 按 text+time 在 talkList 中定位当前用户消息，
+     * 取其之后连续的 type===2 客服回复（遇到下一条用户消息为止）。
+     */
+    function getHumanRepliesAfter(item) {
+      if (!talkListAll.length || !item) return "";
+      const text = item.text;
+      const time = item.time == null ? "" : String(item.time);
+      const idx = talkListAll.findIndex(
+        (t) => t.type === 1 && t.text === text && String(t.time || "") === time
+      );
+      if (idx < 0) return "";
+      const replies = [];
+      for (let i = idx + 1; i < talkListAll.length; i++) {
+        const t = talkListAll[i];
+        if (t.type === 1) break;
+        if (t.type === 2 && t.text) replies.push(String(t.text));
       }
-      return out;
+      return replies.join("\n");
+    }
+
+    /** 接口调用时间，格式贴近示例：2026/6/16 20:44 */
+    function formatCallTime(d = new Date()) {
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const h = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      return `${y}/${m}/${day} ${h}:${min}`;
+    }
+
+    function buildExportRows() {
+      const header = ["时间", "用户问题", "AI回复", "销售真人回复", "AI回的好还是坏"];
+      const rows = sessionRecords.map((r) => [
+        r.time || "",
+        r.user || "",
+        r.reply || "-",
+        r.humanReply || "-",
+        "",
+      ]);
+      return [header, ...rows];
     }
 
     function saveResults({ auto = false } = {}) {
@@ -503,25 +538,24 @@
         log("INFO", "info", auto ? "无可保存结果，跳过自动保存" : "暂无 SEND/OK 结果可保存");
         return false;
       }
-      const data = buildExportJson();
+      if (typeof XLSX === "undefined") {
+        log("ERR", "err", "未加载 xlsx 库，无法导出 Excel");
+        return false;
+      }
+      const aoa = buildExportRows();
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "结果");
       const ts = new Date()
         .toISOString()
         .replace(/[:.]/g, "-")
         .slice(0, 19);
-      const filename = `send-results-${ts}.json`;
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json;charset=utf-8",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      const filename = `send-results-${ts}.xlsx`;
+      XLSX.writeFile(wb, filename);
       log(
         "INFO",
         "info",
-        `${auto ? "自动" : "手动"}保存 ${data.length} 条 → ${escapeHtml(filename)}`
+        `${auto ? "自动" : "手动"}保存 ${sessionRecords.length} 条 → ${escapeHtml(filename)}`
       );
       return true;
     }
@@ -553,6 +587,7 @@
       );
 
       try {
+        const calledAt = formatCallTime();
         const res = await fetch(API_URL, {
           method: "POST",
           headers: {
@@ -571,7 +606,12 @@
           return false;
         }
         log("OK", "ok", escapeHtml(reply || "(空回复)"));
-        sessionRecords.push({ user: item.text, reply: reply || "" });
+        sessionRecords.push({
+          time: calledAt,
+          user: item.text,
+          reply: reply || "",
+          humanReply: getHumanRepliesAfter(item),
+        });
         return true;
       } catch (err) {
         log(
