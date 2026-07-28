@@ -223,7 +223,7 @@
       outline: none;
     }
 
-    .field select { width: 160px; cursor: pointer; }
+    .field select { width: 170px; cursor: pointer; }
 
     .field input:focus,
     .field select:focus {
@@ -266,6 +266,10 @@
           <select id="modelFile"></select>
         </div>
         <div class="field">
+          <label for="talkListFile">聊天记录文件</label>
+          <select id="talkListFile"></select>
+        </div>
+        <div class="field">
           <label for="maxDelaySec">最大间隔（秒）</label>
           <input id="maxDelaySec" type="number" min="1" step="1" value="10" />
         </div>
@@ -277,6 +281,7 @@
         <button id="btnStart">开始发送</button>
         <button id="btnPause" class="secondary" disabled>暂停</button>
         <button id="btnStop" class="danger" disabled>停止并重置</button>
+        <!-- <button id="btnSave" class="secondary" type="button">保存结果</button> -->
         <span class="hint" id="loadHint">正在加载 model.json…</span>
       </div>
       <div class="progress"><i id="bar"></i></div>
@@ -292,11 +297,16 @@
   </div>
 
   <script>
-    const API_URL = "http://192.168.1.96:20202/juzi/callback";
+    const API_URL = "http://test-lhw-dify.ydtg.com.cn/v1/workflows/run";
+    const API_KEY = "app-Qwp0qBULTAFuVuGSry86I2NR";
+    const FIXED_NAME = "张三丰";
+    const FIXED_USER = "user-abc-123";
     // 延迟请求时长 s
     const DEFAULT_MAX_DELAY_SEC = 10;
-    /** 模拟数据文件 */
-    const MODEL_FILES = ["model.json","model2.json"];
+    /** 模拟数据文件（用户话术） */
+    const MODEL_FILES = ["model.json", "model2.json"];
+    /** 聊天记录文件（含 type 的完整对话） */
+    const TALK_LIST_FILES = ["talkList.json", "talkList2.json"];
 
     const DEFAULT_CHAT_ID = "6a4c8ac67dad3f2469625443";
 
@@ -308,23 +318,6 @@
       const fromRoute = (getQueryParam("chatId") || "").trim();
       return fromRoute || DEFAULT_CHAT_ID;
     }
-
-    const BASE_PAYLOAD = {
-      orgId: "68e70e1a2224999385816c6f",
-      groupId: "69e0400855314e4e090316f4",
-      token: "a539895b64ae4940a1872e5fe507c90f",
-      botId: "6a4210b63765149a0c9e58e0",
-      imBotId: "1688858402770889",
-      botUserId: "634702026",
-      avatar: "https://wx.qlogo.cn/mmhead/j8cooK2zCqqGgy56Cy4iaHKZIPciaYAibicjYY8z0dCicba87XSj3e2CpRg/0",
-      imContactId: "7881299760941752",
-      externalUserId: "wmKUshRAAAvFaSNuUs8DktC5wADC_-LQ",
-      customerExternalUserId: "wmKUshRAAAvFaSNuUs8DktC5wADC_-LQ",
-      contactName: "Sky.Lynn",
-      contactType: 1,
-      source: 0,
-      messageType: 7,
-    };
 
     const el = {
       total: document.getElementById("total"),
@@ -339,18 +332,27 @@
       btnStop: document.getElementById("btnStop"),
       btnClearLog: document.getElementById("btnClearLog"),
       btnReloadModel: document.getElementById("btnReloadModel"),
+    //   btnSave: document.getElementById("btnSave"),
       maxDelaySec: document.getElementById("maxDelaySec"),
       modelFile: document.getElementById("modelFile"),
+      talkListFile: document.getElementById("talkListFile"),
     };
 
-    // 用 MODEL_FILES 填充下拉，之后只需改 MODEL_FILES 一处
-    el.modelFile.innerHTML = MODEL_FILES.map((f, i) =>
-      `<option value="${f}"${i === 0 ? " selected" : ""}>${f}</option>`
-    ).join("");
+    function fillSelect(selectEl, files) {
+      selectEl.innerHTML = files.map((f, i) =>
+        `<option value="${f}"${i === 0 ? " selected" : ""}>${f}</option>`
+      ).join("");
+    }
+
+    // 之后只需改 MODEL_FILES / TALK_LIST_FILES 两处列表
+    fillSelect(el.modelFile, MODEL_FILES);
+    fillSelect(el.talkListFile, TALK_LIST_FILES);
 
     let messages = [];
-    /** talkList.json 全量记录（含 type），用于 model.json 发送时附带上文 */
+    /** 当前选中的 talkList 全量记录（含 type），发送时附带上文 */
     let talkListAll = [];
+    /** 本轮 SEND + OK 结果，用于导出 JSON */
+    let sessionRecords = [];
     let index = 0;
     let sentCount = 0;
     let running = false;
@@ -358,11 +360,6 @@
     let timerId = null;
     let countdownId = null;
     let waitUntil = 0;
-
-    function genMessageId() {
-      if (crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "");
-      return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 14)}`;
-    }
 
     function parseTime(str) {
       // "2026-06-17 20:16:41" -> local Date
@@ -459,48 +456,122 @@
         : before;
     }
 
+    function formatHistoryLine(t) {
+      const role = t.type === 1 ? "用户" : "客服";
+      return `[${t.time}][${role}] text: ${t.text}`;
+    }
+
+    function buildConversationHistory(list) {
+      return list.map(formatHistoryLine).join("\n");
+    }
+
+    /** 从 blocking 响应中取 data.outputs.text_out */
+    function extractReplyText(raw) {
+      try {
+        const obj = JSON.parse(raw);
+        const textOut = obj && obj.data && obj.data.outputs && obj.data.outputs.text_out;
+        if (typeof textOut === "string") return textOut;
+      } catch (_) { /* not JSON */ }
+      return "";
+    }
+
+    /** 去掉 &lt;text&gt; 等标签，只保留纯文本 */
+    function stripHtmlTags(s) {
+      const str = String(s || "");
+      const parts = [];
+      const re = /<text>([\s\S]*?)<\/text>/gi;
+      let m;
+      while ((m = re.exec(str))) {
+        const t = m[1].trim();
+        if (t) parts.push(t);
+      }
+      if (parts.length) return parts.join(" ");
+      return str.replace(/<[^>]+>/g, "").trim();
+    }
+
+    function buildExportJson() {
+      const out = [];
+      for (const r of sessionRecords) {
+        out.push(`[用户]：${r.user}`);
+        out.push(`[客服]：${r.reply}`);
+      }
+      return out;
+    }
+
+    function saveResults({ auto = false } = {}) {
+      if (!sessionRecords.length) {
+        log("INFO", "info", auto ? "无可保存结果，跳过自动保存" : "暂无 SEND/OK 结果可保存");
+        return false;
+      }
+      const data = buildExportJson();
+      const ts = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .slice(0, 19);
+      const filename = `send-results-${ts}.json`;
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      log(
+        "INFO",
+        "info",
+        `${auto ? "自动" : "手动"}保存 ${data.length} 条 → ${escapeHtml(filename)}`
+      );
+      return true;
+    }
+
     async function sendOne(item) {
+      // 按当前选中的聊天记录文件，附带这句话之前最近最多 30 条
+      const historyList = getTalkListBefore(item);
+      const conversationHistory = buildConversationHistory(historyList);
+
       const body = {
-        ...BASE_PAYLOAD,
-        chatId: getChatId(),
-        messageId: genMessageId(),
-        timestamp: Date.now(),
-        payload: { text: item.text },
+        inputs: {
+          type: "text",
+          name: FIXED_NAME,
+          query: item.text,
+          conversation_history: conversationHistory,
+        },
+        response_mode: "blocking",
+        user: FIXED_USER,
+        files: [],
+        trace_id: "",
       };
 
-      // 仅 model.json 对话附带 talkList（这句话之前的全部记录）
-      if (getModelFile() === "model.json") {
-        body.talkList = getTalkListBefore(item);
-      }
-
-      const talkHint =
-        body.talkList != null
-          ? ` · talkList=${body.talkList.length} 条`
-          : "";
+      const historyHint = ` · history=${historyList.length} 条`;
 
       log(
         "SEND",
         "info",
-        `<span class="muted">#${index + 1}</span> ${escapeHtml(item.text)} <span class="muted">· chatId=${body.chatId} · messageId=${body.messageId} · ts=${body.timestamp}${talkHint}</span>`
+        `<span class="muted">#${index + 1}</span> ${escapeHtml(item.text)} <span class="muted">· user=${FIXED_USER} · name=${FIXED_NAME}${historyHint}</span>`
       );
 
       try {
         const res = await fetch(API_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${API_KEY}`,
+          },
           body: JSON.stringify(body),
         });
         const text = await res.text();
-        let preview = text;
-        try {
-          preview = JSON.stringify(JSON.parse(text));
-        } catch (_) { /* keep raw */ }
+        const replyRaw = extractReplyText(text);
+        const reply = stripHtmlTags(replyRaw);
 
         if (!res.ok) {
-          log("ERR", "err", `HTTP ${res.status} · ${escapeHtml(preview.slice(0, 300))}`);
+          const errPreview = reply || text.slice(0, 300);
+          log("ERR", "err", `HTTP ${res.status} · ${escapeHtml(errPreview)}`);
           return false;
         }
-        log("OK", "ok", escapeHtml(preview.slice(0, 300) || "(空响应)"));
+        log("OK", "ok", escapeHtml(reply || "(空回复)"));
+        sessionRecords.push({ user: item.text, reply: reply || "" });
         return true;
       } catch (err) {
         log(
@@ -532,6 +603,7 @@
         el.btnStop.disabled = true;
         el.btnPause.textContent = "暂停";
         log("DONE", "ok", `全部 ${messages.length} 条已处理完毕`);
+        saveResults({ auto: true });
         return;
       }
 
@@ -581,6 +653,19 @@
       return MODEL_FILES[0];
     }
 
+    function getTalkListFile() {
+      const name = String(el.talkListFile.value || "").trim();
+      if (TALK_LIST_FILES.includes(name)) return name;
+      return TALK_LIST_FILES[0];
+    }
+
+    function updateLoadHint() {
+      const modelFile = getModelFile();
+      const talkFile = getTalkListFile();
+      el.loadHint.textContent =
+        `数据 ${modelFile}（${messages.length}）· 聊天记录 ${talkFile}（${talkListAll.length}）`;
+    }
+
     function resetProgress() {
       index = 0;
       sentCount = 0;
@@ -594,20 +679,24 @@
       const lockConfig = isRunning && !paused;
       el.maxDelaySec.disabled = lockConfig;
       el.modelFile.disabled = lockConfig;
+      el.talkListFile.disabled = lockConfig;
       el.btnReloadModel.disabled = lockConfig;
     }
 
     async function loadTalkList() {
+      const file = getTalkListFile();
       try {
-        const res = await fetch("./talkList.json", { cache: "no-store" });
-        if (!res.ok) throw new Error(`加载 talkList.json 失败: HTTP ${res.status}`);
+        const res = await fetch(`./${file}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`加载 ${file} 失败: HTTP ${res.status}`);
         const data = await res.json();
-        if (!Array.isArray(data)) throw new Error("talkList.json 格式应为数组");
+        if (!Array.isArray(data)) throw new Error(`${file} 格式应为数组`);
         talkListAll = data;
-        log("INFO", "info", `talkList.json 加载成功，共 ${talkListAll.length} 条`);
+        log("INFO", "info", `${file} 加载成功，共 ${talkListAll.length} 条`);
+        updateLoadHint();
         return true;
       } catch (err) {
         talkListAll = [];
+        updateLoadHint();
         log("ERR", "err", escapeHtml(err.message || String(err)));
         return false;
       }
@@ -625,9 +714,9 @@
         messages = data;
         if (reset) resetProgress();
         el.total.textContent = String(messages.length);
-        el.loadHint.textContent = `已加载 ${file}（${messages.length} 条）`;
         el.btnStart.disabled = running;
         log("INFO", "info", `${file} 加载成功，共 ${messages.length} 条`);
+        updateLoadHint();
         return true;
       } catch (err) {
         messages = [];
@@ -637,6 +726,10 @@
         log("ERR", "err", escapeHtml(err.message || String(err)));
         return false;
       }
+    }
+
+    async function reloadAll({ reset = true } = {}) {
+      await Promise.all([loadTalkList(), loadModel({ reset })]);
     }
 
     el.btnStart.addEventListener("click", () => {
@@ -657,6 +750,10 @@
         sentCount = 0;
         updateProgress();
       }
+      // 新开一轮（非继续暂停）时清空本轮结果
+      if (index === 0 && sentCount === 0) {
+        sessionRecords = [];
+      }
       running = true;
       paused = false;
       setRunningUi(true);
@@ -676,6 +773,7 @@
       el.btnPause.textContent = "暂停";
       el.maxDelaySec.disabled = false;
       el.modelFile.disabled = false;
+      el.talkListFile.disabled = false;
       el.btnReloadModel.disabled = false;
       log("INFO", "info", `已暂停，当前位置第 ${index + 1} 条`);
     });
@@ -684,14 +782,20 @@
       running = false;
       paused = false;
       clearTimers();
+      saveResults({ auto: true });
       index = 0;
       sentCount = 0;
       updateProgress();
       setStatus("已停止");
       setRunningUi(false);
       el.btnPause.textContent = "暂停";
+      el.log.innerHTML = "";
       log("INFO", "info", "已停止并重置进度");
     });
+
+        // el.btnSave.addEventListener("click", () => {
+        // saveResults({ auto: false });
+        // });
 
     el.btnClearLog.addEventListener("click", () => {
       el.log.innerHTML = "";
@@ -699,7 +803,7 @@
 
     el.btnReloadModel.addEventListener("click", () => {
       if (running && !paused) return;
-      loadModel({ reset: true });
+      reloadAll({ reset: true });
     });
 
     el.modelFile.addEventListener("change", () => {
@@ -707,7 +811,12 @@
       loadModel({ reset: true });
     });
 
-    Promise.all([loadTalkList(), loadModel({ reset: true })]);
+    el.talkListFile.addEventListener("change", () => {
+      if (running && !paused) return;
+      loadTalkList();
+    });
+
+    reloadAll({ reset: true });
   </script>
 </body>
 </html>
