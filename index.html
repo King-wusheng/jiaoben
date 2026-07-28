@@ -271,7 +271,7 @@
         </div>
         <div class="field">
           <label for="maxDelaySec">最大间隔（秒）</label>
-          <input id="maxDelaySec" type="number" min="1" step="1" value="10" />
+          <input id="maxDelaySec" type="number" min="1" step="1" value="1" />
         </div>
         <button id="btnReloadModel" class="secondary" type="button">重新加载</button>
         <span class="hint">切换文件后会重新加载；运行中不可切换</span>
@@ -303,11 +303,27 @@
     const FIXED_NAME = "张三丰";
     const FIXED_USER = "user-abc-123";
     // 延迟请求时长 s
-    const DEFAULT_MAX_DELAY_SEC = 10;
+    const DEFAULT_MAX_DELAY_SEC = 1;
     /** 模拟数据文件（用户话术） */
-    const MODEL_FILES = ["model.json", "model2.json"];
+    const MODEL_FILES = [
+      "model.json",
+      "model2.json",
+      "model04.json",
+      "model05.json",
+      "model06.json",
+      "model07.json",
+      "model08.json",
+    ];
     /** 聊天记录文件（含 type 的完整对话） */
-    const TALK_LIST_FILES = ["talkList.json", "talkList2.json"];
+    const TALK_LIST_FILES = [
+      "talkList.json",
+      "talkList2.json",
+      "talkList04.json",
+      "talkList05.json",
+      "talkList06.json",
+      "talkList07.json",
+      "talkList08.json",
+    ];
 
     const DEFAULT_CHAT_ID = "6a4c8ac67dad3f2469625443";
 
