@@ -395,6 +395,9 @@
     let sentCount = 0;
     let running = false;
     let paused = false;
+    let stopping = false;
+    /** 当前进行中的 sendOne Promise，停止时需等待其结束 */
+    let sendInFlight = null;
     let timerId = null;
     let countdownId = null;
     let waitUntil = 0;
@@ -798,14 +801,14 @@
           batch.items.length > 1
             ? `（合并 ${batch.items.length} 条）`
             : "";
-        log(
-          "WAIT",
-          "wait",
-          `等待 ${formatMs(delay)} 后发送第 ${index + 1} 条${batchHint}` +
-            (capped
-              ? ` <span class="muted">（原始间隔 ${formatMs(rawDiff)}，已封顶 ${formatMs(maxDelayMs)}）</span>`
-              : ` <span class="muted">（按原始间隔）</span>`)
-        );
+        // log(
+        //   "WAIT",
+        //   "wait",
+        //   `等待 ${formatMs(delay)} 后发送第 ${index + 1} 条${batchHint}` +
+        //     (capped
+        //       ? ` <span class="muted">（原始间隔 ${formatMs(rawDiff)}，已封顶 ${formatMs(maxDelayMs)}）</span>`
+        //       : ` <span class="muted">（按原始间隔）</span>`)
+        // );
         setStatus("等待中");
         startCountdown(delay);
       } else {
@@ -814,16 +817,25 @@
       }
 
       timerId = setTimeout(async () => {
-        if (!running || paused) return;
+        if (!running || paused || stopping) return;
         clearInterval(countdownId);
         countdownId = null;
         el.nextWait.textContent = "-";
         setStatus("发送中");
 
-        await sendOne(batch);
+        sendInFlight = sendOne(batch);
+        try {
+          await sendInFlight;
+        } finally {
+          sendInFlight = null;
+        }
+
+        if (stopping) return;
+
         index += batch.items.length;
         sentCount = index;
         updateProgress();
+        if (!running || paused) return;
         scheduleNext();
       }, delay);
     }
@@ -939,6 +951,7 @@
       }
       running = true;
       paused = false;
+      stopping = false;
       setRunningUi(true);
       el.btnPause.textContent = "暂停";
       setStatus("运行中");
@@ -970,19 +983,38 @@
       log("INFO", "info", `已暂停，当前位置第 ${index + 1} 条`);
     });
 
-    el.btnStop.addEventListener("click", () => {
-      running = false;
-      paused = false;
-      clearTimers();
+    function finishStop() {
       saveResults({ auto: true });
       index = 0;
       sentCount = 0;
       updateProgress();
+      stopping = false;
       setStatus("已停止");
       setRunningUi(false);
       el.btnPause.textContent = "暂停";
       el.log.innerHTML = "";
       log("INFO", "info", "已停止并重置进度");
+    }
+
+    el.btnStop.addEventListener("click", async () => {
+      if (stopping) return;
+      stopping = true;
+      running = false;
+      paused = false;
+      clearTimers();
+      el.btnStop.disabled = true;
+      el.btnPause.disabled = true;
+      el.btnStart.disabled = true;
+
+      if (sendInFlight) {
+        setStatus("停止中…");
+        log("INFO", "info", "等待当前接口响应结束后停止…");
+        try {
+          await sendInFlight;
+        } catch (_) { /* ignore */ }
+      }
+
+      finishStop();
     });
 
         el.btnSave.addEventListener("click", () => {
