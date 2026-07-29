@@ -281,7 +281,7 @@
         <button id="btnStart">开始发送</button>
         <button id="btnPause" class="secondary" disabled>暂停</button>
         <button id="btnStop" class="danger" disabled>停止并重置</button>
-        <!-- <button id="btnSave" class="secondary" type="button">保存结果</button> -->
+        <button id="btnSave" class="secondary" type="button">保存结果</button>
         <span class="hint" id="loadHint">正在加载 model.json…</span>
       </div>
       <div class="progress"><i id="bar"></i></div>
@@ -349,7 +349,7 @@
       btnStop: document.getElementById("btnStop"),
       btnClearLog: document.getElementById("btnClearLog"),
       btnReloadModel: document.getElementById("btnReloadModel"),
-    //   btnSave: document.getElementById("btnSave"),
+      btnSave: document.getElementById("btnSave"),
       maxDelaySec: document.getElementById("maxDelaySec"),
       modelFile: document.getElementById("modelFile"),
       talkListFile: document.getElementById("talkListFile"),
@@ -527,8 +527,10 @@
       return replies.join("\n");
     }
 
-    /** 接口调用时间，格式贴近示例：2026/6/16 20:44 */
-    function formatCallTime(d = new Date()) {
+    /** talkList 对话时间 → 导出格式：2026/6/16 20:44 */
+    function formatTalkTime(timeStr) {
+      const d = parseTime(timeStr);
+      if (Number.isNaN(d.getTime())) return String(timeStr || "");
       const y = d.getFullYear();
       const m = d.getMonth() + 1;
       const day = d.getDate();
@@ -603,7 +605,6 @@
       );
 
       try {
-        const calledAt = formatCallTime();
         const res = await fetch(API_URL, {
           method: "POST",
           headers: {
@@ -623,7 +624,7 @@
         }
         log("OK", "ok", escapeHtml(reply || "(空回复)"));
         sessionRecords.push({
-          time: calledAt,
+          time: formatTalkTime(item.time),
           user: item.text,
           reply: reply || "",
           humanReply: getHumanRepliesAfter(item),
@@ -849,9 +850,9 @@
       log("INFO", "info", "已停止并重置进度");
     });
 
-        // el.btnSave.addEventListener("click", () => {
-        // saveResults({ auto: false });
-        // });
+        el.btnSave.addEventListener("click", () => {
+        saveResults({ auto: false });
+        });
 
     el.btnClearLog.addEventListener("click", () => {
       el.log.innerHTML = "";
