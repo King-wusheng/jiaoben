@@ -225,6 +225,10 @@
 
     .field select { width: 170px; cursor: pointer; }
 
+    .field select.send-mode { width: 150px; }
+
+    .field.hidden { display: none; }
+
     .field input:focus,
     .field select:focus {
       border-color: var(--accent);
@@ -273,6 +277,18 @@
           <label for="maxDelaySec">最大间隔（秒）</label>
           <input id="maxDelaySec" type="number" min="1" step="1" value="1" />
         </div>
+        <div class="field">
+          <label for="sendMode">消息发送模式</label>
+          <select id="sendMode" class="send-mode">
+            <option value="single">单句发送</option>
+            <option value="dialogue">对话拼接发送</option>
+            <option value="interval">固定时间间隔</option>
+          </select>
+        </div>
+        <div class="field hidden" id="mergeIntervalField">
+          <label for="mergeIntervalSec">拼接间隔（秒）</label>
+          <input id="mergeIntervalSec" type="number" min="1" step="1" value="30" />
+        </div>
         <button id="btnReloadModel" class="secondary" type="button">重新加载</button>
         <span class="hint">切换文件后会重新加载；运行中不可切换</span>
       </div>
@@ -304,6 +320,8 @@
     const FIXED_USER = "user-abc-123";
     // 延迟请求时长 s
     const DEFAULT_MAX_DELAY_SEC = 1;
+    /** 固定时间间隔模式下，消息合并的默认阈值（秒） */
+    const DEFAULT_MERGE_INTERVAL_SEC = 30;
     /** 模拟数据文件（用户话术） */
     const MODEL_FILES = [
       "model.json",
@@ -351,6 +369,9 @@
       btnReloadModel: document.getElementById("btnReloadModel"),
       btnSave: document.getElementById("btnSave"),
       maxDelaySec: document.getElementById("maxDelaySec"),
+      sendMode: document.getElementById("sendMode"),
+      mergeIntervalSec: document.getElementById("mergeIntervalSec"),
+      mergeIntervalField: document.getElementById("mergeIntervalField"),
       modelFile: document.getElementById("modelFile"),
       talkListFile: document.getElementById("talkListFile"),
     };
@@ -416,6 +437,99 @@
       el.sent.textContent = String(sentCount);
       const pct = messages.length ? (sentCount / messages.length) * 100 : 0;
       el.bar.style.width = `${pct}%`;
+    }
+
+    function getSendMode() {
+      const v = String(el.sendMode.value || "single");
+      if (v === "dialogue" || v === "interval") return v;
+      return "single";
+    }
+
+    function getMergeIntervalSec() {
+      const sec = Number(el.mergeIntervalSec.value);
+      if (!Number.isFinite(sec) || sec < 1) return DEFAULT_MERGE_INTERVAL_SEC;
+      return Math.floor(sec);
+    }
+
+    function syncMergeIntervalVisibility() {
+      const show = getSendMode() === "interval";
+      el.mergeIntervalField.classList.toggle("hidden", !show);
+    }
+
+    function msgKey(item) {
+      const text = item && item.text != null ? String(item.text) : "";
+      const time = item && item.time != null ? String(item.time) : "";
+      return `${text}\0${time}`;
+    }
+
+    /**
+     * 按发送模式解析一批待发送消息。
+     * @returns {{ items: object[], query: string, first: object, last: object }}
+     */
+    function resolveSendBatch(startIndex) {
+      const first = messages[startIndex];
+      if (!first) {
+        return { items: [], query: "", first: null, last: null };
+      }
+
+      const mode = getSendMode();
+
+      if (mode === "dialogue") {
+        const text = first.text;
+        const time = first.time == null ? "" : String(first.time);
+        const idx = talkListAll.findIndex(
+          (t) => t.type === 1 && t.text === text && String(t.time || "") === time
+        );
+        let talkGroup = [first];
+        if (idx >= 0) {
+          talkGroup = [talkListAll[idx]];
+          for (let i = idx + 1; i < talkListAll.length; i++) {
+            const t = talkListAll[i];
+            if (t.type !== 1) break;
+            talkGroup.push(t);
+          }
+        }
+        const keySet = new Set(talkGroup.map(msgKey));
+        const items = [];
+        for (let i = startIndex; i < messages.length; i++) {
+          if (!keySet.has(msgKey(messages[i]))) break;
+          items.push(messages[i]);
+        }
+        if (!items.length) items.push(first);
+        const query = talkGroup.map((t) => String(t.text || "")).join(" ");
+        const last = talkGroup[talkGroup.length - 1];
+        return { items, query, first: items[0], last };
+      }
+
+      if (mode === "interval") {
+        const thresholdMs = getMergeIntervalSec() * 1000;
+        const items = [first];
+        for (let i = startIndex + 1; i < messages.length; i++) {
+          const prev = items[items.length - 1];
+          const next = messages[i];
+          const prevT = parseTime(prev.time).getTime();
+          const nextT = parseTime(next.time).getTime();
+          if (Number.isNaN(prevT) || Number.isNaN(nextT)) break;
+          if (nextT - prevT < thresholdMs) items.push(next);
+          else break;
+        }
+        const query = items.map((m) => String(m.text || "")).join(" ");
+        return { items, query, first: items[0], last: items[items.length - 1] };
+      }
+
+      // single
+      return {
+        items: [first],
+        query: String(first.text || ""),
+        first,
+        last: first,
+      };
+    }
+
+    function sendModeLabel(mode) {
+      if (mode === "dialogue") return "对话拼接";
+      if (mode === "interval") return "固定间隔";
+      return "单句";
     }
 
     function log(tag, cls, html) {
@@ -578,16 +692,16 @@
       return true;
     }
 
-    async function sendOne(item) {
+    async function sendOne(batch) {
       // 按当前选中的聊天记录文件，附带这句话之前最近最多 30 条
-      const historyList = getTalkListBefore(item);
+      const historyList = getTalkListBefore(batch.first);
       const conversationHistory = buildConversationHistory(historyList);
 
       const body = {
         inputs: {
           type: "text",
           name: FIXED_NAME,
-          query: item.text,
+          query: batch.query,
           conversation_history: conversationHistory,
         },
         response_mode: "blocking",
@@ -596,12 +710,17 @@
         trace_id: "",
       };
 
+      const mode = getSendMode();
+      const mergeHint =
+        batch.items.length > 1
+          ? ` · ${sendModeLabel(mode)} ${batch.items.length} 条`
+          : ` · ${sendModeLabel(mode)}`;
       const historyHint = ` · history=${historyList.length} 条`;
 
       log(
         "SEND",
         "info",
-        `<span class="muted">#${index + 1}</span> ${escapeHtml(item.text)} <span class="muted">· user=${FIXED_USER} · name=${FIXED_NAME}${historyHint}</span>`
+        `<span class="muted">#${index + 1}</span> ${escapeHtml(batch.query)}${mergeHint} <span class="muted">· user=${FIXED_USER} · name=${FIXED_NAME}${historyHint}</span>`
       );
 
       try {
@@ -624,10 +743,10 @@
         }
         log("OK", "ok", escapeHtml(reply || "(空回复)"));
         sessionRecords.push({
-          time: formatTalkTime(item.time),
-          user: item.text,
+          time: formatTalkTime(batch.first.time),
+          user: batch.query,
           reply: reply || "",
-          humanReply: getHumanRepliesAfter(item),
+          humanReply: getHumanRepliesAfter(batch.last),
         });
         return true;
       } catch (err) {
@@ -664,8 +783,9 @@
         return;
       }
 
+      const batch = resolveSendBatch(index);
       const prev = index > 0 ? messages[index - 1] : null;
-      const curr = messages[index];
+      const curr = batch.first;
       const delay = getDelayMs(prev, curr);
 
       if (delay > 0) {
@@ -674,10 +794,14 @@
           : 0;
         const maxDelayMs = getMaxDelayMs();
         const capped = rawDiff > maxDelayMs;
+        const batchHint =
+          batch.items.length > 1
+            ? `（合并 ${batch.items.length} 条）`
+            : "";
         log(
           "WAIT",
           "wait",
-          `等待 ${formatMs(delay)} 后发送第 ${index + 1} 条` +
+          `等待 ${formatMs(delay)} 后发送第 ${index + 1} 条${batchHint}` +
             (capped
               ? ` <span class="muted">（原始间隔 ${formatMs(rawDiff)}，已封顶 ${formatMs(maxDelayMs)}）</span>`
               : ` <span class="muted">（按原始间隔）</span>`)
@@ -696,9 +820,9 @@
         el.nextWait.textContent = "-";
         setStatus("发送中");
 
-        await sendOne(curr);
-        sentCount += 1;
-        index += 1;
+        await sendOne(batch);
+        index += batch.items.length;
+        sentCount = index;
         updateProgress();
         scheduleNext();
       }, delay);
@@ -735,6 +859,8 @@
       el.btnStop.disabled = !isRunning;
       const lockConfig = isRunning && !paused;
       el.maxDelaySec.disabled = lockConfig;
+      el.sendMode.disabled = lockConfig;
+      el.mergeIntervalSec.disabled = lockConfig;
       el.modelFile.disabled = lockConfig;
       el.talkListFile.disabled = lockConfig;
       el.btnReloadModel.disabled = lockConfig;
@@ -816,7 +942,14 @@
       setRunningUi(true);
       el.btnPause.textContent = "暂停";
       setStatus("运行中");
-      log("INFO", "info", `开始从第 ${index + 1} 条发送，共 ${messages.length} 条 · chatId=${getChatId()}`);
+      const mode = getSendMode();
+      const modeExtra =
+        mode === "interval" ? ` · 拼接间隔=${getMergeIntervalSec()}s` : "";
+      log(
+        "INFO",
+        "info",
+        `开始从第 ${index + 1} 条发送，共 ${messages.length} 条 · 模式=${sendModeLabel(mode)}${modeExtra} · chatId=${getChatId()}`
+      );
       scheduleNext();
     });
 
@@ -829,6 +962,8 @@
       el.btnPause.disabled = true;
       el.btnPause.textContent = "暂停";
       el.maxDelaySec.disabled = false;
+      el.sendMode.disabled = false;
+      el.mergeIntervalSec.disabled = false;
       el.modelFile.disabled = false;
       el.talkListFile.disabled = false;
       el.btnReloadModel.disabled = false;
@@ -873,6 +1008,11 @@
       loadTalkList();
     });
 
+    el.sendMode.addEventListener("change", () => {
+      syncMergeIntervalVisibility();
+    });
+
+    syncMergeIntervalVisibility();
     reloadAll({ reset: true });
   </script>
 </body>
