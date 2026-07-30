@@ -331,6 +331,14 @@
       "model06.json",
       "model07.json",
       "model08.json",
+      "model11.json",
+      "model12.json",
+      "model13.json",
+      "model14.json",
+      "model15.json",
+      "model16.json",
+      "model17.json",
+      "model18.json",
     ];
     /** 聊天记录文件（含 type 的完整对话） */
     const TALK_LIST_FILES = [
@@ -341,6 +349,14 @@
       "talkList06.json",
       "talkList07.json",
       "talkList08.json",
+      "talkList11.json",
+      "talkList12.json",
+      "talkList13.json",
+      "talkList14.json",
+      "talkList15.json",
+      "talkList16.json",
+      "talkList17.json",
+      "talkList18.json",
     ];
 
     const DEFAULT_CHAT_ID = "6a4c8ac67dad3f2469625443";
@@ -567,7 +583,7 @@
     }
 
     /** talkList 请求最多携带的上文条数 */
-    const TALK_LIST_LIMIT = 30;
+    const TALK_LIST_LIMIT = 6;
 
     /**
      * 从 fromIdx 起向后找下一条用户消息。
@@ -684,14 +700,26 @@
       return `${y}/${m}/${day} ${h}:${min}`;
     }
 
+    /** 从接口响应中取 workflow_run_id，写入 Excel「响应数据」列 */
+    function extractWorkflowRunId(raw) {
+      try {
+        const obj = JSON.parse(String(raw || ""));
+        const id = obj && obj.workflow_run_id;
+        return typeof id === "string" ? id : id != null ? String(id) : "";
+      } catch (_) {
+        return "";
+      }
+    }
+
     function buildExportRows() {
-      const header = ["时间", "用户问题", "AI回复", "销售真人回复", "AI回的好还是坏"];
+      const header = ["时间", "用户问题", "AI回复", "销售真人回复", "AI回的好还是坏", "响应数据"];
       const rows = sessionRecords.map((r) => [
         r.time || "",
         r.user || "",
         r.reply || "-",
         r.humanReply || "-",
         "",
+        r.responseData || "",
       ]);
       return [header, ...rows];
     }
@@ -787,6 +815,7 @@
           humanReply: located
             ? getHumanRepliesAfterAt(located.lastIdx)
             : "",
+          responseData: extractWorkflowRunId(text),
         });
         return true;
       } catch (err) {
